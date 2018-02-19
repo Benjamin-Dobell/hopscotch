@@ -1,4 +1,4 @@
-/**! hopscotch - v0.3.1
+/**! hopscotch - v0.3.1.1
 *
 * Copyright 2017 LinkedIn Corp. All rights reserved.
 *
@@ -346,7 +346,7 @@ define('hopscotch', function () { 'use strict';
     },
 
     /**
-     * Helper function to get a single target DOM element. We will try to
+     * Helper function to find a DOM element with an identifier. We will try to
      * locate the DOM element through several ways, in the following order:
      *
      * 1) Passing the string into document.querySelector
@@ -359,7 +359,7 @@ define('hopscotch', function () { 'use strict';
      *
      * @private
      */
-    getStepTargetHelper: function getStepTargetHelper(target) {
+    getElementByIdentifier: function getElementByIdentifier(target) {
       var result = document.getElementById(target);
 
       //Backwards compatibility: assume the string is an id
@@ -389,6 +389,23 @@ define('hopscotch', function () { 'use strict';
     },
 
     /**
+     * Returns the container DOM element where bubble elements will be added
+     * as children. The container element can be specified by tourOpt.container
+     * as either a string identifier (ID/selector) or directly as a JavaScript
+     * DOM element. By default, or if the specified string identifier does not
+     * match an element, the document's body is used.
+     *
+     * @private
+     */
+    getContainer: function getContainer(tourOpt) {
+      if (tourOpt.container) {
+        return typeof tourOpt.container === 'string' ? utils.getElementByIdentifier(tourOpt.container) || document.body : tourOpt.container;
+      }
+
+      return document.body;
+    },
+
+    /**
      * Given a step, returns the target DOM element associated with it. It is
      * recommended to only assign one target per step. However, there are
      * some use cases which require multiple step targets to be supplied. In
@@ -407,7 +424,7 @@ define('hopscotch', function () { 'use strict';
 
       if (typeof step.target === 'string') {
         //Just one target to test. Check and return its results.
-        return utils.getStepTargetHelper(step.target);
+        return utils.getElementByIdentifier(step.target);
       } else if (Array.isArray(step.target)) {
         // Multiple items to check. Check each and return the first success.
         // Assuming they are all strings.
@@ -415,7 +432,7 @@ define('hopscotch', function () { 'use strict';
 
         for (i = 0, len = step.target.length; i < len; i++) {
           if (typeof step.target[i] === 'string') {
-            queriedTarget = utils.getStepTargetHelper(step.target[i]);
+            queriedTarget = utils.getElementByIdentifier(step.target[i]);
 
             if (queriedTarget) {
               return queriedTarget;
@@ -613,6 +630,7 @@ define('hopscotch', function () { 'use strict';
           left,
           arrowOffset,
           verticalLeftPosition,
+          containerElementOffset,
           targetEl = utils.getStepTarget(step),
           el = this.element,
           arrowEl = this.arrowEl,
@@ -627,7 +645,6 @@ define('hopscotch', function () { 'use strict';
 
       // SET POSITION
       boundingRect = targetEl.getBoundingClientRect();
-
       verticalLeftPosition = step.isRtl ? boundingRect.right - bubbleBoundingWidth : boundingRect.left;
 
       if (step.placement === 'top') {
@@ -679,6 +696,7 @@ define('hopscotch', function () { 'use strict';
       } else {
         left += utils.getPixelValue(step.xOffset);
       }
+
       // VERTICAL OFFSET
       if (step.yOffset === 'center') {
         top = boundingRect.top + targetEl.offsetHeight / 2 - bubbleBoundingHeight / 2;
@@ -690,6 +708,20 @@ define('hopscotch', function () { 'use strict';
       if (!step.fixedElement) {
         top += utils.getScrollTop();
         left += utils.getScrollLeft();
+      }
+
+      // CONVERT TO CONTAINER COORDINATES
+      el.style.top = '0';
+      el.style.left = '0';
+
+      containerElementOffset = el.getBoundingClientRect();
+
+      top -= containerElementOffset.top;
+      left -= containerElementOffset.left;
+
+      if (!this.opt.fixedContainer) {
+        top -= utils.getScrollTop();
+        left -= utils.getScrollLeft();
       }
 
       // ACCOUNT FOR FIXED POSITION ELEMENTS
@@ -1052,7 +1084,7 @@ define('hopscotch', function () { 'use strict';
           resizeCooldown = false,
           // for updating after window resize
       onWinResize,
-          _appendToBody2,
+          _appendToContainer,
           children,
           numChildren,
           node,
@@ -1121,34 +1153,44 @@ define('hopscotch', function () { 'use strict';
       //Hide the bubble by default
       this.hide();
 
-      //Finally, append our new bubble to body once the DOM is ready.
+      //Finally, append our new bubble to the container once the DOM is ready.
+
       if (utils.documentIsReady()) {
-        document.body.appendChild(el);
+        utils.getContainer(opt).appendChild(el);
       } else {
         // Moz, webkit, Opera
         if (document.addEventListener) {
-          _appendToBody2 = function appendToBody() {
-            document.removeEventListener('DOMContentLoaded', _appendToBody2);
-            window.removeEventListener('load', _appendToBody2);
-
-            document.body.appendChild(el);
+          _appendToContainer = function appendToContainer() {
+            document.removeEventListener('DOMContentLoaded', _appendToContainer);
+            window.removeEventListener('load', _appendToContainer);
+            utils.getContainer(opt).appendChild(el);
           };
 
-          document.addEventListener('DOMContentLoaded', _appendToBody2, false);
+          document.addEventListener('DOMContentLoaded', appendToBody, false);
         }
         // IE
         else {
-            _appendToBody2 = function _appendToBody() {
+            appendToBody = function (_appendToBody) {
+              function appendToBody() {
+                return _appendToBody.apply(this, arguments);
+              }
+
+              appendToBody.toString = function () {
+                return _appendToBody.toString();
+              };
+
+              return appendToBody;
+            }(function () {
               if (document.readyState === 'complete') {
-                document.detachEvent('onreadystatechange', _appendToBody2);
-                window.detachEvent('onload', _appendToBody2);
+                document.detachEvent('onreadystatechange', appendToBody);
+                window.detachEvent('onload', appendToBody);
                 document.body.appendChild(el);
               }
-            };
+            });
 
-            document.attachEvent('onreadystatechange', _appendToBody2);
+            document.attachEvent('onreadystatechange', appendToBody);
           }
-        utils.addEvtListener(window, 'load', _appendToBody2);
+        utils.addEvtListener(window, 'load', appendToBody);
       }
     }
   };
@@ -1395,17 +1437,23 @@ define('hopscotch', function () { 'use strict';
       var bubble = getBubble(),
 
 
+      // Calculate the current viewport top and bottom
+      windowTop = utils.getScrollTop(),
+          windowBottom = windowTop + utils.getWindowHeight(),
+          containerTop = utils.getContainer(opt).getBoundingClientRect().top + windowTop,
+
+
       // Calculate the bubble element top and bottom position
       bubbleEl = bubble.element,
-          bubbleTop = utils.getPixelValue(bubbleEl.style.top),
+          bubbleTop = utils.getPixelValue(bubbleEl.style.top) + containerTop,
           bubbleBottom = bubbleTop + utils.getPixelValue(bubbleEl.offsetHeight),
 
 
       // Calculate the target element top and bottom position
       targetEl = utils.getStepTarget(getCurrStep()),
           targetBounds = targetEl.getBoundingClientRect(),
-          targetElTop = targetBounds.top + utils.getScrollTop(),
-          targetElBottom = targetBounds.bottom + utils.getScrollTop(),
+          targetElTop = targetBounds.top + windowTop,
+          targetElBottom = targetBounds.bottom + windowTop,
 
 
       // The higher of the two: bubble or target
@@ -1415,11 +1463,6 @@ define('hopscotch', function () { 'use strict';
       targetBottom = bubbleBottom > targetElBottom ? bubbleBottom : targetElBottom,
 
 
-      // Calculate the current viewport top and bottom
-      windowTop = utils.getScrollTop(),
-          windowBottom = windowTop + utils.getWindowHeight(),
-
-
       // This is our final target scroll value.
       scrollToVal = targetTop - getOption('scrollTopMargin'),
           scrollEl,
@@ -1427,7 +1470,6 @@ define('hopscotch', function () { 'use strict';
           yuiEase,
           direction,
           scrollIncr,
-          scrollTimeout,
           _scrollTimeoutFn;
 
       // Target and bubble are both visible in viewport
@@ -1768,7 +1810,7 @@ define('hopscotch', function () { 'use strict';
 
       bubble.render(step, stepNum, function (adjustScroll) {
         // when done adjusting window scroll, call showBubble helper fn
-        if (adjustScroll) {
+        if (adjustScroll && !getOption('fixedContainer')) {
           adjustWindowScroll(showBubble);
         } else {
           showBubble();
